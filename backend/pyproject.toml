@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "company-rag-backend"
+version = "0.1.0"
+description = "Private company knowledge-base RAG API"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "alembic>=1.15,<2",
+  "asyncmy>=0.2.10,<1",
+  "cryptography>=44,<47",
+  "fastapi>=0.115,<1",
+  "greenlet>=3.1,<4",
+  "httpx>=0.28,<1",
+  "langchain>=1.0,<2",
+  "langchain-core>=1.0,<2",
+  "langchain-openai>=1.0,<2",
+  "langgraph>=1.0,<2",
+  "pillow>=11,<13",
+  "pydantic-settings>=2.8,<3",
+  "pymilvus>=2.6.17,<2.7",
+  "pymupdf>=1.26,<2",
+  "python-docx>=1.1.2,<2",
+  "python-multipart>=0.0.20,<1",
+  "python-pptx>=1.0.2,<2",
+  "sqlalchemy>=2.0.38,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "aiosqlite>=0.21,<1",
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.25,<2",
+  "ruff>=0.9,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
