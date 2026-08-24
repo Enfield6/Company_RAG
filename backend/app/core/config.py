@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     vision_base_url: str | None = None
     vision_api_key: str | None = None
     vision_model: str | None = "qwen3.5-omni-plus"
+    image_enrichment_concurrency: int = Field(default=4, ge=1, le=8)
 
     upload_dir: Path = Path("storage/uploads")
     max_upload_mb: int = 100

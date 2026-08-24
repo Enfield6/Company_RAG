@@ -29,6 +29,16 @@ class LocalFileStorage:
         if target.exists():
             shutil.rmtree(target)
 
+    def prune_images(self, document_id: str, keep_paths: set[str]) -> None:
+        """Remove generated image files that are no longer referenced after re-ingestion."""
+        image_directory = self.resolve(f"{document_id}/images")
+        if not image_directory.exists():
+            return
+        for path in image_directory.iterdir():
+            relative_path = path.relative_to(self.root).as_posix()
+            if path.is_file() and relative_path not in keep_paths:
+                path.unlink()
+
     def _write(self, relative: Path, content: bytes) -> str:
         destination = self.root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

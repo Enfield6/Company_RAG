@@ -45,7 +45,8 @@ class DocxParser:
         elements: list[ParsedElement],
     ) -> None:
         paragraph_text = paragraph.text.strip()
-        heading_level = self._heading_level(paragraph)
+        style_name = self._style_name(paragraph)
+        heading_level = self._heading_level(style_name)
         if heading_level and paragraph_text:
             del heading_stack[heading_level - 1 :]
             while len(heading_stack) < heading_level - 1:
@@ -69,7 +70,7 @@ class DocxParser:
                     heading_stack,
                     metadata={
                         "source": "paragraph",
-                        "style": paragraph.style.name,
+                        "style": style_name,
                         "alt_text": alt_text,
                     },
                 )
@@ -86,7 +87,7 @@ class DocxParser:
                     kind="text",
                     text=paragraph_text,
                     heading_path=self._clean_heading_path(heading_stack),
-                    metadata={"style": paragraph.style.name},
+                    metadata={"style": style_name},
                 ),
             )
 
@@ -209,8 +210,15 @@ class DocxParser:
         )
 
     @staticmethod
-    def _heading_level(paragraph: Paragraph) -> int | None:
-        style_name = paragraph.style.name or ""
+    def _style_name(paragraph: Paragraph) -> str:
+        """Return a safe style name for documents with missing style definitions."""
+        style = paragraph.style
+        if style is None:
+            return ""
+        return style.name or ""
+
+    @staticmethod
+    def _heading_level(style_name: str) -> int | None:
         match = re.match(r"(?:Heading|标题)\s*([1-9])", style_name, flags=re.IGNORECASE)
         return int(match.group(1)) if match else None
 

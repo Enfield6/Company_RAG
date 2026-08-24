@@ -57,6 +57,7 @@ def build_ingestion_service() -> IngestionService:
         get_vector_store(),
         get_image_enricher(),
         StructureAwareChunker(settings.chunk_size, settings.chunk_overlap),
+        image_enrichment_concurrency=settings.image_enrichment_concurrency,
     )
 
 

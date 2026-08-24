@@ -39,3 +39,28 @@ def test_pdf_parser_renders_empty_or_scanned_page_for_vision(tmp_path) -> None:
     assert elements[0].kind == "image"
     assert elements[0].metadata["scan_fallback"] is True
     assert elements[0].image_bytes
+
+
+def test_pdf_parser_suppresses_repeated_page_assets(tmp_path) -> None:
+    repeated_path = tmp_path / "repeated.png"
+    useful_path = tmp_path / "useful.png"
+    Image.new("RGB", (50, 50), (3, 4, 5)).save(repeated_path)
+    Image.new("RGB", (240, 120), (16, 163, 127)).save(useful_path)
+
+    path = tmp_path / "repeated-assets.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=400, height=600)
+    for offset in range(4):
+        x = 20 + offset * 70
+        page.insert_image(pymupdf.Rect(x, 30, x + 50, 80), filename=str(repeated_path))
+    page.insert_image(pymupdf.Rect(40, 150, 360, 310), filename=str(useful_path))
+    document.save(path)
+    document.close()
+
+    elements = PdfParser().parse(path)
+    images = [element for element in elements if element.kind == "image"]
+
+    assert len(images) == 1
+    assert images[0].metadata["width"] == 240
+    assert images[0].metadata["height"] == 120
+    assert images[0].metadata["sha256"]

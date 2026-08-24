@@ -84,7 +84,18 @@ class MilvusVectorStore:
             }
             for chunk, vector in zip(chunks, vectors, strict=True)
         ]
-        await asyncio.to_thread(self._get_client().upsert, self.collection_name, rows)
+        await asyncio.to_thread(self._replace_document_sync, document_id, rows)
+
+    def _replace_document_sync(self, document_id: str, rows: list[dict[str, Any]]) -> None:
+        client = self._get_client()
+        client.delete(
+            collection_name=self.collection_name,
+            filter=f'document_id == "{document_id}"',
+        )
+        client.flush(collection_name=self.collection_name)
+        if rows:
+            client.upsert(collection_name=self.collection_name, data=rows)
+            client.flush(collection_name=self.collection_name)
 
     async def search(
         self,

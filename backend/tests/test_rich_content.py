@@ -32,14 +32,71 @@ def test_rich_content_builds_editorial_blocks_and_direct_image() -> None:
     assert [block["type"] for block in blocks] == [
         "heading",
         "lead",
-        "image",
         "list",
+        "image",
         "callout",
     ]
     assert blocks[1]["source_ranks"] == [1]
-    assert blocks[2]["caption"] == "请假审批流程图"
-    assert blocks[2]["relation"] == "direct"
-    assert blocks[3]["style"] == "ordered"
+    assert blocks[2]["style"] == "ordered"
+    assert blocks[3]["caption"] == "请假审批流程图"
+    assert blocks[3]["relation"] == "direct"
+    assert blocks[3]["placement"] == "inline"
+
+
+def test_rich_content_uses_semantics_when_answer_does_not_repeat_source_rank() -> None:
+    answer = """### 卡机连接故障排查
+
+**1. 检查网络**
+确认网线和无线网络是否正常。[来源1]
+
+**2. 完成卡机入库**
+在设备后台填写设备码并绑定酒店。[来源1]
+
+**3. 重启验证**
+保存设置后重启应用。"""
+    image = {
+        "type": "image",
+        "document_id": "doc-1",
+        "sequence_no": 12,
+        "caption": "卡机入库页面，需要填写设备码并选择酒店",
+        "source_rank": 2,
+        "source_label": "操作手册.docx",
+        "relation": "nearby",
+        "alt": "卡机入库页面",
+        "anchor_text": "新卡机入库，填写设备码后绑定酒店",
+    }
+
+    blocks = RichContentBuilder().insert_images(
+        RichContentBuilder().build(answer, []), [image]
+    )
+
+    image_index = next(index for index, block in enumerate(blocks) if block["type"] == "image")
+    assert blocks[image_index - 2]["text"] == "2. 完成卡机入库"
+    assert blocks[image_index - 1]["text"].startswith("在设备后台填写设备码")
+    assert blocks[image_index]["placement"] == "inline"
+    assert "anchor_text" not in blocks[image_index]
+
+
+def test_rich_content_turns_standalone_bold_lines_into_section_headings() -> None:
+    answer = """### 故障排查
+
+**1. 检查网络环境**
+请先确认有线网络是否可用。[来源1]
+
+**2. 检查设备状态**
+重启设备后再次验证。"""
+
+    blocks = RichContentBuilder().build(answer, [])
+
+    assert [block["type"] for block in blocks] == [
+        "heading",
+        "heading",
+        "lead",
+        "heading",
+        "paragraph",
+    ]
+    assert blocks[1]["text"] == "1. 检查网络环境"
+    assert blocks[1]["level"] == 3
 
 
 async def test_rich_content_adds_only_nearby_document_image(tmp_path) -> None:
@@ -78,6 +135,15 @@ async def test_rich_content_adds_only_nearby_document_image(tmp_path) -> None:
         await session.commit()
 
         blocks = RichContentBuilder().build("审批需要直属主管确认。[来源1]", [])
+        blocks.append(
+            {
+                "id": "stale-image",
+                "type": "image",
+                "document_id": document.id,
+                "sequence_no": 99,
+                "caption": "已经失效的旧图片引用",
+            }
+        )
         result = await RichContentBuilder().add_related_document_images(
             session,
             blocks,

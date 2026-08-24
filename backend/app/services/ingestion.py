@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import Document, DocumentElement, IngestionJob
@@ -26,6 +26,7 @@ class IngestionService:
         image_enricher: ImageEnricher,
         chunker: StructureAwareChunker,
         parser_registry: DocumentParserRegistry | None = None,
+        image_enrichment_concurrency: int = 4,
     ) -> None:
         self.session_factory = session_factory
         self.storage = storage
@@ -34,6 +35,7 @@ class IngestionService:
         self.image_enricher = image_enricher
         self.chunker = chunker
         self.parser_registry = parser_registry or DocumentParserRegistry()
+        self.image_enrichment_concurrency = max(1, image_enrichment_concurrency)
 
     async def process(self, document_id: str) -> None:
         async with self.session_factory() as session:
@@ -52,7 +54,10 @@ class IngestionService:
                 job.progress = 10
                 job.attempts += 1
                 job.started_at = datetime.now(UTC)
+                job.finished_at = None
+                job.error_message = None
                 document.status = "processing"
+                document.error_message = None
                 await session.commit()
 
                 path = self.storage.resolve(document.storage_path)
@@ -61,16 +66,33 @@ class IngestionService:
                 job.stage = "image_enrichment"
                 job.progress = 35
                 await session.commit()
-                for element in elements:
-                    if element.kind != "image" or not element.image_bytes:
-                        continue
+                image_elements = [
+                    element
+                    for element in elements
+                    if element.kind == "image" and element.image_bytes
+                ]
+                for element in image_elements:
                     element.image_path = self.storage.save_image(
                         document.id,
                         element.sequence_no,
                         element.image_extension or ".bin",
                         element.image_bytes,
                     )
-                    await self.image_enricher.enrich(element)
+
+                semaphore = asyncio.Semaphore(self.image_enrichment_concurrency)
+
+                async def enrich_image(element) -> None:
+                    async with semaphore:
+                        await self.image_enricher.enrich(element)
+
+                if image_elements:
+                    logger.info(
+                        "Enriching %s images for document %s with concurrency %s",
+                        len(image_elements),
+                        document.id,
+                        self.image_enrichment_concurrency,
+                    )
+                    await asyncio.gather(*(enrich_image(element) for element in image_elements))
 
                 job.stage = "chunking"
                 job.progress = 55
@@ -89,6 +111,9 @@ class IngestionService:
                     document.knowledge_base_id, document.id, chunks, vectors
                 )
 
+                await session.execute(
+                    delete(DocumentElement).where(DocumentElement.document_id == document.id)
+                )
                 session.add_all(
                     [
                         DocumentElement(
@@ -116,6 +141,13 @@ class IngestionService:
                 job.progress = 100
                 job.finished_at = datetime.now(UTC)
                 await session.commit()
+                try:
+                    self.storage.prune_images(
+                        document.id,
+                        {element.image_path for element in image_elements if element.image_path},
+                    )
+                except Exception:
+                    logger.exception("Failed to prune stale images for %s", document.id)
             except Exception as exc:
                 logger.exception("Ingestion failed for document %s", document_id)
                 await session.rollback()
