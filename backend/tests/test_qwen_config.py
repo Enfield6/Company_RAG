@@ -11,6 +11,7 @@ def test_qwen_key_is_shared_by_all_model_capabilities() -> None:
     assert settings.vision_model == "qwen3.5-omni-plus"
     assert settings.embedding_model == "text-embedding-v4"
     assert settings.embedding_dimension == 1024
+    assert settings.retrieval_min_score == 0.4
     assert settings.resolved_llm_api_key == "test-key"
     assert settings.resolved_vision_api_key == "test-key"
     assert settings.resolved_embedding_api_key == "test-key"

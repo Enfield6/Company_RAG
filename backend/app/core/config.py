@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     chunk_size: int = 900
     chunk_overlap: int = 120
     retrieval_top_k: int = 6
+    retrieval_min_score: float = Field(default=0.4, ge=0, le=1)
 
     @property
     def max_upload_bytes(self) -> int:

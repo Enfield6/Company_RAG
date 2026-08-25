@@ -83,6 +83,7 @@ def get_rag_graph() -> RAGGraph:
         get_vector_store(),
         generator,
         settings.retrieval_top_k,
+        settings.retrieval_min_score,
     )
 
 
