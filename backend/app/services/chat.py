@@ -62,6 +62,13 @@ class ChatService:
     ) -> list[dict[str, Any]]:
         return await builder.add_related_document_images(self.session, blocks, citation_values)
 
+    async def resolve_document_images(
+        self,
+        builder: RichContentBuilder,
+        citation_values: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return await builder.resolve_document_images(self.session, citation_values)
+
     async def complete(
         self,
         conversation_id: str,

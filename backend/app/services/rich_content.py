@@ -1,6 +1,4 @@
 import re
-from collections import defaultdict
-from dataclasses import dataclass
 from math import sqrt
 from typing import Any
 
@@ -13,15 +11,11 @@ HEADING_PATTERN = re.compile(r"^(#{1,4})\s+(.+)$")
 ORDERED_ITEM_PATTERN = re.compile(r"^\s*(\d+)[.)、]\s+(.+)$")
 BULLET_ITEM_PATTERN = re.compile(r"^\s*[-*•]\s+(.+)$")
 BOLD_HEADING_PATTERN = re.compile(r"^\*\*(?=\S)(.+?\S)\*\*$")
+MARKDOWN_IMAGE_PATTERN = re.compile(r"^!\[[^]]*]\([^)]*\)$")
+IMAGE_CONTROL_NOTE_PATTERN = re.compile(
+    r"系统.*自动.*知识库.*(?:原图|图片).*(?:插入|放入).*步骤"
+)
 SEMANTIC_TEXT_PATTERN = re.compile(r"[^a-z0-9\u4e00-\u9fff]+")
-
-
-@dataclass(slots=True)
-class _ArticleSection:
-    anchor_index: int
-    block_indexes: list[int]
-    text: str
-    source_ranks: set[int]
 
 
 class RichContentBuilder:
@@ -37,72 +31,65 @@ class RichContentBuilder:
         ]
         return self.insert_images(blocks, [image for image in direct_images if image][:2])
 
-    async def add_related_document_images(
+    def compose(
+        self, answer: str, images: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Build a snapshot and place only images that match a concrete answer block."""
+        return self.insert_images(self._parse_text(answer), images)
+
+    async def resolve_document_images(
         self,
         db: AsyncSession,
-        blocks: list[dict[str, Any]],
         citations: list[dict[str, Any]],
         max_images: int = 2,
         max_sequence_distance: int = 12,
     ) -> list[dict[str, Any]]:
-        images = [block for block in blocks if block.get("type") == "image"]
-        if images:
-            image_document_ids = {
-                str(block["document_id"]) for block in images if block.get("document_id")
-            }
-            valid_image_keys = await document_elements.list_image_keys(
-                db, image_document_ids
-            )
-            images = [
-                block
-                for block in images
-                if (str(block.get("document_id")), block.get("sequence_no"))
-                in valid_image_keys
-            ]
-            valid_block_ids = {str(block.get("id")) for block in images}
-            blocks = [
-                block
-                for block in blocks
-                if block.get("type") != "image" or str(block.get("id")) in valid_block_ids
-            ]
-        used = {(block.get("document_id"), block.get("sequence_no")) for block in images}
+        document_ids = {
+            str(item["document_id"]) for item in citations if item.get("document_id")
+        }
+        filenames = await documents.get_filenames(db, document_ids) if document_ids else {}
+        valid_image_keys = await document_elements.list_image_keys(db, document_ids)
 
-        document_ids = {str(item["document_id"]) for item in citations if item.get("document_id")}
-        filenames: dict[str, str] = {}
-        if document_ids:
-            filenames = await documents.get_filenames(db, document_ids)
-        for image in images:
-            image["source_label"] = filenames.get(
-                str(image.get("document_id")), image.get("source_label") or "知识库文档"
-            )
-
-        related_images: list[dict[str, Any]] = []
+        images: list[dict[str, Any]] = []
+        used: set[tuple[object, object]] = set()
         for citation in citations:
-            if len(images) + len(related_images) >= max_images:
+            if len(images) >= max_images:
                 break
             document_id = citation.get("document_id")
             sequence_no = citation.get("sequence_no")
             if not document_id or not isinstance(sequence_no, int):
                 continue
+
+            if citation.get("chunk_type") == "image":
+                key = (str(document_id), sequence_no)
+                image = self._image_from_citation(citation)
+                if image and key in valid_image_keys and key not in used:
+                    image["source_label"] = filenames.get(
+                        str(document_id), image.get("source_label") or "知识库文档"
+                    )
+                    images.append(image)
+                    used.add(key)
+                continue
+
             element = await document_elements.get_nearest_image(
                 db, str(document_id), sequence_no
             )
             if not element:
                 continue
-            key = (document_id, element.sequence_no)
+            key = (str(document_id), element.sequence_no)
             if key in used or abs(element.sequence_no - sequence_no) > max_sequence_distance:
                 continue
             used.add(key)
-            related_images.append(
+            images.append(
                 {
                     "type": "image",
-                    "document_id": document_id,
+                    "document_id": str(document_id),
                     "sequence_no": element.sequence_no,
-                    "caption": element.image_caption or "与引用内容位于同一段落附近的文档配图",
+                    "caption": element.image_caption or "当前步骤的文档图示",
                     "source_rank": citation.get("rank"),
                     "source_label": filenames.get(str(document_id), "知识库文档"),
                     "relation": "nearby",
-                    "alt": element.image_caption or "相关文档配图",
+                    "alt": element.image_caption or "当前步骤的文档图示",
                     "anchor_text": " ".join(
                         str(value)
                         for value in (
@@ -115,8 +102,23 @@ class RichContentBuilder:
                     ),
                 }
             )
+        return images
 
-        return self.insert_images(blocks, related_images)
+    async def add_related_document_images(
+        self,
+        db: AsyncSession,
+        blocks: list[dict[str, Any]],
+        citations: list[dict[str, Any]],
+        max_images: int = 2,
+        max_sequence_distance: int = 12,
+    ) -> list[dict[str, Any]]:
+        images = await self.resolve_document_images(
+            db,
+            citations,
+            max_images=max_images,
+            max_sequence_distance=max_sequence_distance,
+        )
+        return self.insert_images(blocks, images)
 
     def insert_images(
         self, blocks: list[dict[str, Any]], images: list[dict[str, Any]]
@@ -135,16 +137,19 @@ class RichContentBuilder:
             all_images.append(image)
 
         if not all_images or not article_blocks:
-            return self._with_ids([*article_blocks, *all_images])
+            return self._with_ids(article_blocks)
 
-        sections = self._article_sections(article_blocks)
-        placements: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        placements: dict[int, list[dict[str, Any]]] = {}
         for image in all_images:
-            anchor = self._best_image_anchor(image, sections, article_blocks)
+            anchor = self._best_image_anchor(image, article_blocks)
+            if anchor is None:
+                continue
             placed_image = {
                 key: value for key, value in image.items() if key != "anchor_text"
             }
-            placements[anchor].append({**placed_image, "placement": "inline"})
+            placements.setdefault(anchor, []).append(
+                {**placed_image, "placement": "inline"}
+            )
 
         result: list[dict[str, Any]] = []
         for index, block in enumerate(article_blocks):
@@ -152,82 +157,46 @@ class RichContentBuilder:
             result.extend(placements.get(index, []))
         return self._with_ids(result)
 
-    def _article_sections(self, blocks: list[dict[str, Any]]) -> list[_ArticleSection]:
-        ranges: list[tuple[int, int]] = []
-        start = 0
-        for index, block in enumerate(blocks):
-            if index and block.get("type") == "heading":
-                ranges.append((start, index))
-                start = index
-        ranges.append((start, len(blocks)))
-
-        sections: list[_ArticleSection] = []
-        for range_start, range_end in ranges:
-            section_blocks = blocks[range_start:range_end]
-            body_indexes = [
-                index
-                for index in range(range_start, range_end)
-                if blocks[index].get("type") != "heading"
-            ]
-            if not body_indexes and len(ranges) > 1:
-                continue
-            sections.append(
-                _ArticleSection(
-                    anchor_index=body_indexes[-1] if body_indexes else range_end - 1,
-                    block_indexes=body_indexes or [range_end - 1],
-                    text=" ".join(self._block_text(block) for block in section_blocks),
-                    source_ranks={
-                        int(rank)
-                        for block in section_blocks
-                        for rank in block.get("source_ranks", [])
-                    },
-                )
-            )
-        if not sections:
-            sections.append(
-                _ArticleSection(
-                    anchor_index=len(blocks) - 1,
-                    block_indexes=[len(blocks) - 1],
-                    text=" ".join(self._block_text(block) for block in blocks),
-                    source_ranks=set(),
-                )
-            )
-        return sections
-
     def _best_image_anchor(
         self,
         image: dict[str, Any],
-        sections: list[_ArticleSection],
         blocks: list[dict[str, Any]],
-    ) -> int:
+    ) -> int | None:
         image_text = " ".join(
             str(value)
-            for value in (image.get("caption"), image.get("anchor_text"))
+            for value in (image.get("anchor_text"),)
             if value
         )
-        image_units = self._semantic_units(image_text)
+        caption_units = self._semantic_units(str(image.get("caption") or ""))
+        context_units = self._semantic_units(image_text)
         source_rank = image.get("source_rank")
 
-        def score(section: _ArticleSection) -> tuple[float, float]:
-            section_units = self._semantic_units(section.text)
-            overlap = len(image_units & section_units) / max(1.0, sqrt(len(section_units)))
-            source_match = 10.0 if source_rank in section.source_ranks else 0.0
-            return source_match + overlap, overlap
+        candidate_indexes = [
+            index
+            for index, block in enumerate(blocks)
+            if block.get("type") != "heading" and block.get("source_ranks")
+        ]
+        if not candidate_indexes:
+            return None
 
-        section = max(sections, key=score)
-
-        def block_score(index: int) -> tuple[float, float]:
+        def semantic_score(index: int) -> tuple[float, float]:
             block = blocks[index]
             block_units = self._semantic_units(self._block_text(block))
-            overlap = len(image_units & block_units) / max(1.0, sqrt(len(block_units)))
-            source_match = (
-                10.0 if source_rank in set(block.get("source_ranks", [])) else 0.0
+            denominator = max(1.0, sqrt(len(block_units)))
+            caption_overlap = len(caption_units & block_units) / denominator
+            context_overlap = len(context_units & block_units) / denominator
+            source_bonus = (
+                0.15 if source_rank in set(block.get("source_ranks", [])) else 0.0
             )
-            return source_match + overlap, overlap
+            return caption_overlap + 0.2 * context_overlap + source_bonus, caption_overlap
 
-        best_index = max(section.block_indexes, key=block_score)
-        if block_score(best_index) == (0.0, 0.0):
-            return section.anchor_index
+        best_index = max(candidate_indexes, key=lambda index: semantic_score(index)[0])
+        score, caption_overlap = semantic_score(best_index)
+        source_matches = source_rank in set(blocks[best_index].get("source_ranks", []))
+        if source_matches:
+            return best_index if score >= 0.4 and caption_overlap >= 0.25 else None
+        if score < 1.05 or caption_overlap < 0.35:
+            return None
         return best_index
 
     @staticmethod
@@ -324,11 +293,17 @@ class RichContentBuilder:
                 )
             elif ordered:
                 flush_paragraph()
+                flush_list()
                 flush_quote()
-                if list_items and list_style != "ordered":
-                    flush_list()
-                list_style = "ordered"
-                list_items.append(ordered.group(2).strip())
+                text = ordered.group(2).strip()
+                blocks.append(
+                    {
+                        "type": "step",
+                        "number": int(ordered.group(1)),
+                        "text": text,
+                        "source_ranks": self._source_ranks(text),
+                    }
+                )
             elif bullet:
                 flush_paragraph()
                 flush_quote()
@@ -340,6 +315,14 @@ class RichContentBuilder:
                 flush_paragraph()
                 flush_list()
                 quote_lines.append(line.removeprefix(">").strip())
+            elif MARKDOWN_IMAGE_PATTERN.fullmatch(line):
+                flush_paragraph()
+                flush_list()
+                flush_quote()
+            elif IMAGE_CONTROL_NOTE_PATTERN.search(line):
+                flush_paragraph()
+                flush_list()
+                flush_quote()
             elif not line:
                 flush_paragraph()
                 flush_list()
@@ -384,4 +367,14 @@ class RichContentBuilder:
 
     @staticmethod
     def _with_ids(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [{**block, "id": f"block-{index}"} for index, block in enumerate(blocks)]
+        return [
+            {
+                **block,
+                "id": (
+                    f"image-{block.get('document_id')}-{block.get('sequence_no')}"
+                    if block.get("type") == "image"
+                    else f"block-{index}"
+                ),
+            }
+            for index, block in enumerate(blocks)
+        ]

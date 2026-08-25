@@ -32,15 +32,16 @@ def test_rich_content_builds_editorial_blocks_and_direct_image() -> None:
     assert [block["type"] for block in blocks] == [
         "heading",
         "lead",
-        "list",
+        "step",
+        "step",
         "image",
         "callout",
     ]
     assert blocks[1]["source_ranks"] == [1]
-    assert blocks[2]["style"] == "ordered"
-    assert blocks[3]["caption"] == "请假审批流程图"
-    assert blocks[3]["relation"] == "direct"
-    assert blocks[3]["placement"] == "inline"
+    assert blocks[2]["number"] == 1
+    assert blocks[4]["caption"] == "请假审批流程图"
+    assert blocks[4]["relation"] == "direct"
+    assert blocks[4]["placement"] == "inline"
 
 
 def test_rich_content_uses_semantics_when_answer_does_not_repeat_source_rank() -> None:
@@ -97,6 +98,84 @@ def test_rich_content_turns_standalone_bold_lines_into_section_headings() -> Non
     ]
     assert blocks[1]["text"] == "1. 检查网络环境"
     assert blocks[1]["level"] == 3
+
+
+def test_rich_content_does_not_append_an_unmatched_image_to_the_end() -> None:
+    blocks = RichContentBuilder().build(
+        "### 网络检查\n\n确认网线和无线网络是否正常。",
+        [],
+    )
+    result = RichContentBuilder().insert_images(
+        blocks,
+        [
+            {
+                "type": "image",
+                "document_id": "doc-1",
+                "sequence_no": 9,
+                "caption": "完全无关的财务报表",
+                "anchor_text": "预算 报销 发票",
+                "source_rank": 7,
+            }
+        ],
+    )
+
+    assert all(block["type"] != "image" for block in result)
+
+
+def test_rich_content_stream_snapshot_inserts_image_between_tutorial_steps() -> None:
+    image = {
+        "type": "image",
+        "document_id": "doc-1",
+        "sequence_no": 12,
+        "caption": "卡机入库页面：填写设备码并绑定酒店",
+        "anchor_text": "设备码 酒店 绑定",
+        "source_rank": 1,
+        "source_label": "操作手册.docx",
+        "relation": "nearby",
+        "alt": "卡机入库页面",
+    }
+
+    partial = RichContentBuilder().compose("1. 检查网络", [image])
+    complete = RichContentBuilder().compose(
+        "1. 检查网络\n2. 填写设备码并绑定酒店。[来源1]\n3. 重启验证",
+        [image],
+    )
+
+    assert all(block["type"] != "image" for block in partial)
+    assert [block["type"] for block in complete] == ["step", "step", "image", "step"]
+    assert complete[1]["number"] == 2
+    assert complete[2]["caption"].startswith("卡机入库页面")
+
+
+def test_rich_content_prefers_visual_semantics_over_a_weak_source_rank_match() -> None:
+    image = {
+        "type": "image",
+        "document_id": "doc-1",
+        "sequence_no": 12,
+        "caption": "入库弹窗：填写设备码、选择无线发卡机并关联酒店",
+        "anchor_text": "切换环境后在后台重新入库并绑定酒店",
+        "source_rank": 1,
+    }
+    answer = """1. 右击插件切换运行环境。[来源1]
+2. 打开入库弹窗，填写设备码并选择无线发卡机。[来源2]
+3. 重启应用验证连接。"""
+
+    blocks = RichContentBuilder().compose(answer, [image])
+
+    image_index = next(index for index, block in enumerate(blocks) if block["type"] == "image")
+    assert blocks[image_index - 1]["type"] == "step"
+    assert blocks[image_index - 1]["number"] == 2
+
+
+def test_rich_content_removes_generated_markdown_image_placeholders() -> None:
+    blocks = RichContentBuilder().build(
+        "第一步先检查设备。[来源1]\n\n![步骤截图](请在此处插入截图)\n\n"
+        "系统会自动把知识库原图插入对应步骤\n\n然后继续。",
+        [],
+    )
+
+    assert all("请在此处插入" not in str(block.get("text")) for block in blocks)
+    assert all("系统会自动" not in str(block.get("text")) for block in blocks)
 
 
 async def test_rich_content_adds_only_nearby_document_image(tmp_path) -> None:

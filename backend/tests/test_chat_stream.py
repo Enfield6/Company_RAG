@@ -15,7 +15,32 @@ from app.schemas.chat import CitationRead
 
 
 class FakeRichContent:
-    async def add_related_document_images(self, _db, blocks, _citations):
+    async def resolve_document_images(self, _db, _citations):
+        return [
+            {
+                "id": "image-doc-1-3",
+                "type": "image",
+                "document_id": "doc-1",
+                "sequence_no": 3,
+                "caption": "流程图",
+                "source_label": "测试文档",
+                "source_rank": 1,
+                "relation": "nearby",
+                "alt": "流程图",
+            }
+        ]
+
+    def compose(self, answer, images):
+        blocks = [
+            {
+                "id": "block-0",
+                "type": "paragraph",
+                "text": answer,
+                "source_ranks": [1] if "[来源1]" in answer else [],
+            }
+        ]
+        if "[来源1]" in answer:
+            blocks.extend(images)
         return blocks
 
 
@@ -23,23 +48,27 @@ class FakeGraph:
     answer_generator = SimpleNamespace(model_name="test-model")
     rich_content = FakeRichContent()
 
-    async def ask(self, _question, _knowledge_base_id, _history):
-        return {
-            "answer": "这是一个图文回答。",
-            "citations": [],
-            "rich_blocks": [
-                {
-                    "id": "block-0",
-                    "type": "image",
-                    "document_id": "doc-1",
-                    "sequence_no": 3,
-                    "caption": "流程图",
-                    "source_label": "测试文档",
-                    "relation": "nearby",
-                    "alt": "流程图",
-                }
-            ],
-        }
+    async def retrieve(self, _question, _knowledge_base_id):
+        return [SimpleNamespace(id="chunk-1")]
+
+    def build_citations(self, _chunks):
+        return [
+            {
+                "chunk_id": "chunk-1",
+                "document_id": "doc-1",
+                "rank": 1,
+                "score": 0.9,
+                "quote": "流程说明",
+                "chunk_type": "text",
+                "sequence_no": 2,
+                "metadata": {},
+            }
+        ]
+
+    async def stream_answer(self, _question, _history, _chunks):
+        for part in ("第一步：打开页面。", "[来源1]", "\n\n第二步：保存。"):
+            yield part
+            await asyncio.sleep(0)
 
 
 def test_citation_schema_uses_json_metadata_column() -> None:
@@ -96,6 +125,9 @@ def test_chat_stream_emits_and_persists_rich_blocks(tmp_path) -> None:
 
     assert response.status_code == 200
     assert "event: status" in response.text
-    assert "event: media" in response.text
-    assert "event: rich" in response.text
-    assert message.content_blocks[0]["caption"] == "流程图"
+    assert response.text.count("event: token") == 3
+    assert response.text.count("event: rich") == 3
+    assert "event: media" not in response.text
+    assert response.text.index("event: token") < response.text.index("event: rich")
+    assert [block["type"] for block in message.content_blocks] == ["paragraph", "image"]
+    assert message.content_blocks[1]["caption"] == "流程图"

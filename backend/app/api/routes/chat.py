@@ -1,4 +1,3 @@
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Annotated
@@ -35,30 +34,24 @@ async def stream_chat(
         yield _sse("meta", {"conversation_id": context.conversation.id})
         yield _sse("status", {"stage": "retrieving", "message": "正在检索文字与相关图片"})
         try:
-            result = await graph.ask(payload.question, payload.knowledge_base_id, context.history)
-            answer = result.get("answer", "")
-            citations = result.get("citations", [])
-            rich_blocks = await service.add_related_document_images(
-                graph.rich_content, result.get("rich_blocks", []), citations
+            chunks = await graph.retrieve(payload.question, payload.knowledge_base_id)
+            citations = graph.build_citations(chunks)
+            images = await service.resolve_document_images(
+                graph.rich_content, citations
             )
-            yield _sse("status", {"stage": "composing", "message": "正在组织图文回答"})
+            yield _sse("status", {"stage": "composing", "message": "正在逐步生成图文回答"})
 
-            media_blocks = [block for block in rich_blocks if block.get("type") == "image"]
-            emitted_media = 0
-            for index in range(0, len(answer), 12):
+            answer = ""
+            rich_blocks: list[dict[str, object]] = []
+            async for token in graph.stream_answer(
+                payload.question, context.history, chunks
+            ):
                 if await request.is_disconnected():
                     return
-                yield _sse("token", {"content": answer[index : index + 12]})
-                progress = (index + 12) / max(len(answer), 1)
-                threshold = 0.18 + emitted_media * 0.38
-                if emitted_media < len(media_blocks) and progress >= threshold:
-                    yield _sse("media", media_blocks[emitted_media])
-                    emitted_media += 1
-                await asyncio.sleep(0)
-            for media_block in media_blocks[emitted_media:]:
-                yield _sse("media", media_block)
-
-            yield _sse("rich", {"blocks": rich_blocks})
+                answer += token
+                yield _sse("token", {"content": token})
+                rich_blocks = graph.rich_content.compose(answer, images)
+                yield _sse("rich", {"blocks": rich_blocks})
 
             assistant_message = await service.complete(
                 conversation_id=context.conversation.id,

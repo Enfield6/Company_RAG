@@ -143,11 +143,14 @@ data: {"stage":"retrieving","message":"正在检索文字与相关图片"}
 event: token
 data: {"content":"根据员工手册"}
 
-event: media
-data: {"id":"block-2","type":"image","document_id":"...","sequence_no":8,"caption":"审批流程图","relation":"direct"}
+event: rich
+data: {"blocks":[{"id":"block-0","type":"heading","text":"审批流"}, ...]}
+
+event: token
+data: {"content":"程，先提交申请。[来源1]"}
 
 event: rich
-data: {"blocks":[{"id":"block-0","type":"heading","text":"审批流程"}, ...]}
+data: {"blocks":[{"id":"block-0","type":"heading","text":"审批流程"},{"id":"image-...","type":"image", ...}]}
 
 event: citations
 data: [{"chunk_id":"...","document_id":"...","rank":1,"score":0.91,...}]
@@ -162,16 +165,13 @@ data: {"message_id":"uuid"}
 |---|---|
 | `meta` | 本次对话 ID |
 | `status` | 当前阶段和用户可读状态，如检索、图文编排 |
-| `token` | 增量回答文本，可多次出现 |
-| `media` | 在文字仍在输出时插入一张文档图片 |
-| `rich` | 完整安全结构块；前端据此切换为图文简报布局 |
+| `token` | Qwen 原生增量回答文本，可多次出现 |
+| `rich` | 当前时刻的安全图文结构快照，可多次出现；匹配到具体来源步骤后，图片直接出现在该步骤之后 |
 | `citations` | 检索引用；包含文档、块类型、顺序号和图片元数据 |
 | `done` | 回答已持久化，给出消息 ID |
 | `error` | 流内错误，格式为 `{"message":"..."}` |
 
-`rich.blocks` 当前支持：`heading`、`lead`、`paragraph`、`list`、`callout`、`image`。前端只渲染这些白名单结构，不执行模型提供的 HTML。当前后端先完成 LangGraph 调用，再把结果分片为 SSE；后续模型服务确定后，可把生成节点替换为模型原生 token 流，前端协议无需变化。
-
-说明：`token` 是后端对完整模型回答进行安全分片后的增量事件，目前不是 Qwen 原生 token 流；这一选择保证 `rich` 图文结构和持久化结果一致。
+`rich.blocks` 当前支持：`heading`、`lead`、`paragraph`、`step`、`list`、`callout`、`image`。前端只渲染这些白名单结构，不执行模型提供的 HTML。后端通过模型原生 `astream` 边生成边发送 `token`，并同步产生 `rich` 快照；图片只锚定到含来源标记且语义匹配的正文或步骤，无法可靠匹配的图片不会兜底堆到回答末尾。
 
 ## 对话历史
 

@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api, streamChat } from '../api/client'
 import type { ChatMessage, Conversation, RichBlock } from '../types'
@@ -43,16 +43,15 @@ export const useChatStore = defineStore('chat', () => {
       role: 'user',
       content: question.trim(),
     }
-    const assistantMessage: ChatMessage = {
+    const assistantMessage = reactive<ChatMessage>({
       id: crypto.randomUUID(),
       role: 'assistant',
       content: '',
       citations: [],
       content_blocks: [],
-      media_blocks: [],
       status_text: '正在理解问题',
       streaming: true,
-    }
+    })
     messages.value.push(userMessage, assistantMessage)
     sending.value = true
     try {
@@ -72,12 +71,9 @@ export const useChatStore = defineStore('chat', () => {
           onToken: ({ content }) => {
             assistantMessage.content += content
           },
-          onMedia: (block) => {
-            assistantMessage.media_blocks?.push(block)
-          },
           onRich: ({ blocks }) => {
             assistantMessage.content_blocks = blocks
-            assistantMessage.status_text = '图文回答已生成'
+            assistantMessage.status_text = '正在逐步生成图文回答'
           },
           onCitations: (citations) => {
             assistantMessage.citations = citations

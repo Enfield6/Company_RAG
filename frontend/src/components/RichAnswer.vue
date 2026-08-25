@@ -9,9 +9,8 @@ const props = withDefaults(
   defineProps<{
     blocks: RichBlock[]
     streaming?: boolean
-    preview?: boolean
   }>(),
-  { streaming: false, preview: false },
+  { streaming: false },
 )
 
 type RichImageGroup = {
@@ -60,10 +59,10 @@ function imageStageStyle(id: string) {
 </script>
 
 <template>
-  <section class="rich-answer" :class="{ 'rich-answer--preview': preview }">
-    <div v-if="!preview" class="rich-answer-kicker">
+  <section class="rich-answer">
+    <div class="rich-answer-kicker">
       <span><Sparkles :size="13" /> 知识库图文解答</span>
-      <span v-if="imageCount"><GalleryHorizontalEnd :size="13" /> {{ imageCount }} 张相关配图</span>
+      <span v-if="imageCount"><GalleryHorizontalEnd :size="13" /> {{ imageCount }} 张步骤图示</span>
       <span v-if="streaming" class="rich-live"><i />生成中</span>
     </div>
 
@@ -85,6 +84,11 @@ function imageStageStyle(id: string) {
           <InlineRichText :text="block.text" />
         </p>
 
+        <div v-else-if="block.type === 'step'" class="rich-step">
+          <span>{{ block.number }}</span>
+          <p><InlineRichText :text="block.text" /></p>
+        </div>
+
         <aside v-else-if="block.type === 'callout'" class="rich-callout">
           <span><Sparkles :size="16" /></span>
           <p><InlineRichText :text="block.text" /></p>
@@ -104,11 +108,11 @@ function imageStageStyle(id: string) {
         <section
           v-else-if="block.type === 'image-group'"
           class="rich-inline-media"
-          aria-label="与当前回答段落相关的文档图片"
+          aria-label="当前步骤的文档图示"
         >
-          <header v-if="!preview" class="rich-inline-media-header">
-            <span><ImageIcon :size="14" /> 操作界面参考</span>
-            <small>对应上文内容 · {{ block.images.length }} 张</small>
+          <header class="rich-inline-media-header">
+            <span><ImageIcon :size="14" /> 本步骤图示</span>
+            <small>{{ block.images.length }} 张</small>
           </header>
           <div
             class="rich-image-grid"
@@ -141,7 +145,7 @@ function imageStageStyle(id: string) {
                 <div>
                   <span><Link2 :size="12" />{{ image.source_label }}</span>
                   <span class="image-relation">
-                    {{ image.relation === 'direct' ? '直接命中' : '相关界面' }}
+                  {{ image.relation === 'direct' ? '原文图片' : '同段图片' }}
                   </span>
                   <span v-if="image.source_rank">来源 {{ image.source_rank }}</span>
                 </div>

@@ -36,11 +36,6 @@ const citationsOpen = ref(false)
               class="typing-cursor"
             />
           </div>
-          <RichAnswer
-            v-if="message.media_blocks?.length"
-            :blocks="message.media_blocks"
-            preview
-          />
         </template>
       </template>
       <div v-else class="message-content">{{ message.content }}</div>

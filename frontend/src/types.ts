@@ -53,6 +53,14 @@ export type RichListBlock = {
   source_ranks?: number[]
 }
 
+export type RichStepBlock = {
+  id: string
+  type: 'step'
+  number: number
+  text: string
+  source_ranks?: number[]
+}
+
 export type RichImageBlock = {
   id: string
   type: 'image'
@@ -65,7 +73,7 @@ export type RichImageBlock = {
   alt: string
 }
 
-export type RichBlock = RichTextBlock | RichListBlock | RichImageBlock
+export type RichBlock = RichTextBlock | RichListBlock | RichStepBlock | RichImageBlock
 
 export interface ChatMessage {
   id: string
@@ -73,7 +81,6 @@ export interface ChatMessage {
   content: string
   citations?: Citation[]
   content_blocks?: RichBlock[]
-  media_blocks?: RichImageBlock[]
   status_text?: string
   streaming?: boolean
   error?: boolean

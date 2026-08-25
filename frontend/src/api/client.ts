@@ -4,7 +4,6 @@ import type {
   DocumentRecord,
   KnowledgeBase,
   RichBlock,
-  RichImageBlock,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
@@ -57,7 +56,6 @@ type StreamHandlers = {
   onMeta: (data: { conversation_id: string }) => void
   onStatus: (data: { stage: string; message: string }) => void
   onToken: (data: { content: string }) => void
-  onMedia: (data: RichImageBlock) => void
   onRich: (data: { blocks: RichBlock[] }) => void
   onCitations: (data: Citation[]) => void
   onDone: (data: { message_id: string }) => void
@@ -82,23 +80,23 @@ export async function streamChat(
   const decoder = new TextDecoder()
   let buffer = ''
 
-  const dispatch = (block: string) => {
+  const dispatch = (block: string): string | undefined => {
     let event = 'message'
     const dataLines: string[] = []
     for (const line of block.split(/\r?\n/)) {
       if (line.startsWith('event:')) event = line.slice(6).trim()
       if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
     }
-    if (!dataLines.length) return
+    if (!dataLines.length) return undefined
     const data = JSON.parse(dataLines.join('\n'))
     if (event === 'meta') handlers.onMeta(data)
     if (event === 'status') handlers.onStatus(data)
     if (event === 'token') handlers.onToken(data)
-    if (event === 'media') handlers.onMedia(data)
     if (event === 'rich') handlers.onRich(data)
     if (event === 'citations') handlers.onCitations(data)
     if (event === 'done') handlers.onDone(data)
     if (event === 'error') handlers.onError(data)
+    return event
   }
 
   while (true) {
@@ -106,7 +104,12 @@ export async function streamChat(
     buffer += decoder.decode(value, { stream: !done })
     const blocks = buffer.split(/\r?\n\r?\n/)
     buffer = blocks.pop() || ''
-    blocks.forEach(dispatch)
+    for (const block of blocks) {
+      const event = dispatch(block)
+      if (event === 'rich') {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      }
+    }
     if (done) break
   }
   if (buffer.trim()) dispatch(buffer)
