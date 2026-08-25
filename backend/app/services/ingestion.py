@@ -2,10 +2,11 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Document, DocumentElement, IngestionJob
+from app.crud.documents import document_elements, documents
+from app.crud.ingestion_jobs import ingestion_jobs
+from app.db.models import DocumentElement
 from app.documents.chunker import StructureAwareChunker
 from app.documents.registry import DocumentParserRegistry
 from app.services.embeddings import EmbeddingService
@@ -39,11 +40,11 @@ class IngestionService:
 
     async def process(self, document_id: str) -> None:
         async with self.session_factory() as session:
-            document = await session.get(Document, document_id)
+            document = await documents.get(session, document_id)
             if not document:
                 logger.warning("Document %s disappeared before ingestion", document_id)
                 return
-            job = await self._latest_job(session, document_id)
+            job = await ingestion_jobs.get_latest(session, document_id)
             if not job:
                 logger.warning("Document %s has no ingestion job", document_id)
                 return
@@ -111,11 +112,10 @@ class IngestionService:
                     document.knowledge_base_id, document.id, chunks, vectors
                 )
 
-                await session.execute(
-                    delete(DocumentElement).where(DocumentElement.document_id == document.id)
-                )
-                session.add_all(
-                    [
+                await document_elements.replace_for_document(
+                    session,
+                    document.id,
+                    (
                         DocumentElement(
                             document_id=document.id,
                             sequence_no=element.sequence_no,
@@ -129,7 +129,7 @@ class IngestionService:
                             element_metadata=element.metadata or None,
                         )
                         for element in elements
-                    ]
+                    ),
                 )
                 document.status = "completed"
                 document.element_count = len(elements)
@@ -155,8 +155,8 @@ class IngestionService:
                     await self.vector_store.delete_document(document_id)
                 except Exception:
                     logger.exception("Failed to clean Milvus rows for %s", document_id)
-                document = await session.get(Document, document_id)
-                job = await self._latest_job(session, document_id)
+                document = await documents.get(session, document_id)
+                job = await ingestion_jobs.get_latest(session, document_id)
                 if document:
                     document.status = "failed"
                     document.error_message = str(exc)[:4000]
@@ -166,13 +166,3 @@ class IngestionService:
                     job.error_message = str(exc)[:4000]
                     job.finished_at = datetime.now(UTC)
                 await session.commit()
-
-    @staticmethod
-    async def _latest_job(session: AsyncSession, document_id: str) -> IngestionJob | None:
-        result = await session.execute(
-            select(IngestionJob)
-            .where(IngestionJob.document_id == document_id)
-            .order_by(IngestionJob.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()

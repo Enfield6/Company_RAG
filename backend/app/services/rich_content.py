@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from math import sqrt
 from typing import Any
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Document, DocumentElement
+from app.crud.documents import document_elements, documents
 
 SOURCE_PATTERN = re.compile(r"\[来源(\d+)]")
 HEADING_PATTERN = re.compile(r"^(#{1,4})\s+(.+)$")
@@ -51,14 +50,9 @@ class RichContentBuilder:
             image_document_ids = {
                 str(block["document_id"]) for block in images if block.get("document_id")
             }
-            result = await db.execute(
-                select(DocumentElement.document_id, DocumentElement.sequence_no).where(
-                    DocumentElement.document_id.in_(image_document_ids),
-                    DocumentElement.kind == "image",
-                    DocumentElement.image_path.is_not(None),
-                )
+            valid_image_keys = await document_elements.list_image_keys(
+                db, image_document_ids
             )
-            valid_image_keys = set(result.tuples().all())
             images = [
                 block
                 for block in images
@@ -76,10 +70,7 @@ class RichContentBuilder:
         document_ids = {str(item["document_id"]) for item in citations if item.get("document_id")}
         filenames: dict[str, str] = {}
         if document_ids:
-            result = await db.execute(
-                select(Document.id, Document.filename).where(Document.id.in_(document_ids))
-            )
-            filenames = dict(result.all())
+            filenames = await documents.get_filenames(db, document_ids)
         for image in images:
             image["source_label"] = filenames.get(
                 str(image.get("document_id")), image.get("source_label") or "知识库文档"
@@ -93,17 +84,9 @@ class RichContentBuilder:
             sequence_no = citation.get("sequence_no")
             if not document_id or not isinstance(sequence_no, int):
                 continue
-            result = await db.execute(
-                select(DocumentElement)
-                .where(
-                    DocumentElement.document_id == document_id,
-                    DocumentElement.kind == "image",
-                    DocumentElement.image_path.is_not(None),
-                )
-                .order_by(func.abs(DocumentElement.sequence_no - sequence_no))
-                .limit(1)
+            element = await document_elements.get_nearest_image(
+                db, str(document_id), sequence_no
             )
-            element = result.scalar_one_or_none()
             if not element:
                 continue
             key = (document_id, element.sequence_no)

@@ -30,6 +30,7 @@ def test_create_and_list_knowledge_base(tmp_path) -> None:
                 json={"name": "研发资料", "description": "内部技术文档"},
             )
             listed = client.get("/api/v1/knowledge-bases")
+            missing = client.get("/api/v1/knowledge-bases/not-found")
     finally:
         app.dependency_overrides.clear()
         asyncio.run(engine.dispose())
@@ -38,3 +39,5 @@ def test_create_and_list_knowledge_base(tmp_path) -> None:
     assert created.json()["name"] == "研发资料"
     assert listed.status_code == 200
     assert listed.json()[0]["document_count"] == 0
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "知识库不存在"}

@@ -1,12 +1,20 @@
 from functools import lru_cache
+from typing import Annotated
 
-from app.core.config import get_settings
-from app.db.session import AsyncSessionLocal
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import Settings, get_settings
+from app.db.session import AsyncSessionLocal, get_db
 from app.documents.chunker import StructureAwareChunker
 from app.graph.rag import AnswerGenerator, RAGGraph
+from app.services.chat import ChatService
+from app.services.documents import DocumentService
 from app.services.embeddings import EmbeddingService
+from app.services.health import HealthService
 from app.services.image_enrichment import ImageEnricher
 from app.services.ingestion import IngestionService
+from app.services.knowledge_bases import KnowledgeBaseService
 from app.services.storage import LocalFileStorage
 from app.services.vector_store import MilvusVectorStore
 
@@ -76,3 +84,31 @@ def get_rag_graph() -> RAGGraph:
         generator,
         settings.retrieval_top_k,
     )
+
+
+def get_knowledge_base_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> KnowledgeBaseService:
+    return KnowledgeBaseService(db, settings)
+
+
+def get_document_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    storage: Annotated[LocalFileStorage, Depends(get_storage)],
+) -> DocumentService:
+    return DocumentService(db, settings, storage)
+
+
+def get_chat_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ChatService:
+    return ChatService(db)
+
+
+def get_health_service(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    vector_store: Annotated[MilvusVectorStore, Depends(get_vector_store)],
+) -> HealthService:
+    return HealthService(db, vector_store)

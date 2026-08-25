@@ -21,6 +21,15 @@ FastAPI ─────────────── MySQL
                           └─ 文本/表格/图片语义块 + 元数据 + 向量
 ```
 
+后端按职责分为四层，依赖方向固定为 `route → service → crud → model`：
+
+1. `api/routes` 只处理 HTTP 参数、响应模型、文件流和 SSE 事件，不写 SQL，也不控制事务；
+2. `services` 编排上传、问答、摄取等业务流程，负责事务边界以及数据库与文件/向量存储的一致性；
+3. `crud` 集中封装可复用的 SQLAlchemy 查询和持久化操作，方法不自动提交，便于多个操作组成一个原子事务；
+4. `db/models` 只定义数据模型和关系。
+
+因此后台任务、管理脚本或未来的消息队列消费者可以直接复用 service/CRUD，而不需要调用 FastAPI 路由。
+
 ## 2. 多格式文档如何保留结构与图片关系
 
 Milvus 是检索数据库，不适合充当原始文件仓库。因此系统不会把图片二进制直接塞进 Milvus。各格式先归一化为有序的 `text/table/image` 元素：
@@ -53,11 +62,12 @@ AI 回答不是直接渲染模型生成的 HTML，而是转换成白名单结构
 
 ```text
 backend/
-  app/api/           API 路由与依赖
+  app/api/           HTTP/SSE 路由、依赖注入与错误映射
+  app/crud/          可复用的 SQLAlchemy 数据访问层（不自行提交）
   app/db/            SQLAlchemy 模型与会话
   app/documents/     多格式解析、Office 转换、结构化切块
   app/graph/         LangGraph 问答图
-  app/services/      文件、向量、图片增强、摄取服务
+  app/services/      业务编排、事务、文件、向量、图片增强与摄取服务
   alembic/           MySQL 迁移
   tests/             后端测试
 frontend/
